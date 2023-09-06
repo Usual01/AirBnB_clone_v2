@@ -1,52 +1,62 @@
 #!/usr/bin/python3
 """
-Fabric script that distributes an archive to your web servers
+This script distributes archive of web_static to web servers
 """
 
-from datetime import datetime
-from fabric.api import *
-import os
+from fabric.api import env
 
-env.hosts = ["44.210.150.159", "35.173.47.15"]
-env.user = "ubuntu"
-
-
-def do_pack():
-    """
-        return the archive path if archive has generated correctly.
-    """
-
-    local("mkdir -p versions")
-    date = datetime.now().strftime("%Y%m%d%H%M%S")
-    archived_f_path = "versions/web_static_{}.tgz".format(date)
-    t_gzip_archive = local("tar -cvzf {} web_static".format(archived_f_path))
-
-    if t_gzip_archive.succeeded:
-        return archived_f_path
-    else:
-        return None
+env.hosts = ['54.157.181.232', '52.206.57.26']
 
 
 def do_deploy(archive_path):
     """
-        Distribute archive.
+    Upload archive to env.hosts & uncompress it
     """
-    if os.path.exists(archive_path):
-        archived_file = archive_path[9:]
-        newest_version = "/data/web_static/releases/" + archived_file[:-4]
-        archived_file = "/tmp/" + archived_file
-        put(archive_path, "/tmp/")
-        run("sudo mkdir -p {}".format(newest_version))
-        run("sudo tar -xzf {} -C {}/".format(archived_file,
-                                             newest_version))
-        run("sudo rm {}".format(archived_file))
-        run("sudo mv {}/web_static/* {}".format(newest_version,
-                                                newest_version))
-        run("sudo rm -rf {}/web_static".format(newest_version))
-        run("sudo rm -rf /data/web_static/current")
-        run("sudo ln -s {} /data/web_static/current".format(newest_version))
+    from fabric.api import run, put
+    import re
 
-        print("New version deployed!")
-        return True
+    if not archive_path:
+        return False
 
-    return False
+    # get folder name where to uncompress archive
+    match = re.compile(r'.*/(\w+).tgz$').search(archive_path)
+    if not match:
+        return False
+    folder = match.group(1)
+
+    # upload archive to server
+    ret = put(archive_path, '/tmp/')
+    if not ret.succeeded:
+        return False
+
+    # uncompress archive
+    ret = run("mkdir -p /data/web_static/releases/{}".format(folder))
+    if not ret.succeeded:
+        return False
+    ret = run("tar -xzf /tmp/{}.tgz -C \
+               /data/web_static/releases/{}".format(folder, folder))
+    if not ret.succeeded:
+        return False
+
+    # delete archive from server & move files
+    ret = run("rm /tmp/{}.tgz".format(folder))
+    if not ret.succeeded:
+        return False
+    ret = run("mv /data/web_static/releases/{}/web_static/* \
+               /data/web_static/releases/{}/".format(folder, folder))
+    if not ret.succeeded:
+        return False
+    ret = run("rm -rf /data/web_static/releases/{}/web_static/".format(folder))
+    if not ret.succeeded:
+        return False
+
+    # delete symlink and create new one
+    ret = run("rm -rf /data/web_static/current")
+    if not ret.succeeded:
+        return False
+    ret = run("ln -fs /data/web_static/releases/{}/ \
+               /data/web_static/current".format(folder))
+    if not ret.succeeded:
+        return False
+
+    return True
